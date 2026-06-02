@@ -297,100 +297,104 @@ export default function UploadPanel({
         )}
 
         {/* Library of uploaded documents */}
-        {documentsLoading ? (
-          <div className="docs-library">
-            <div className="docs-library-header">
-              <span className="docs-library-title">Your Documents</span>
-            </div>
-            <div className="skeleton" style={{ height: 56, borderRadius: 8 }} />
-            <div className="skeleton" style={{ height: 56, borderRadius: 8 }} />
-          </div>
-        ) : documents.length > 0 ? (
-          <div className="docs-library">
-            <div className="docs-library-header">
-              <span className="docs-library-title">
-                Your Documents ({documents.length})
+        <div className="docs-library">
+          <div className="docs-library-header">
+            <span className="docs-library-title">
+              {documentsLoading ? 'Your Documents' : `Your Documents${documents.length > 0 ? ` (${documents.length})` : ''}`}
+            </span>
+            {!documentsLoading && selectedDocIds.length > 0 && (
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-accent)', fontWeight: 600 }}>
+                {selectedDocIds.length} selected
               </span>
-              {selectedDocIds.length > 0 && (
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-accent)', fontWeight: 600 }}>
-                  {selectedDocIds.length} selected
-                </span>
-              )}
-            </div>
-
-            {documents.map((doc) => {
-              const isSelected = selectedDocIds.includes(doc.id);
-              const isReady = doc.status === 'ready';
-              return (
-                <div
-                  key={doc.id}
-                  className="doc-item"
-                  onClick={() => isReady && toggleDocSelection(doc.id)}
-                  style={{ cursor: isReady ? 'pointer' : 'default' }}
-                  role={isReady ? 'checkbox' : undefined}
-                  aria-checked={isReady ? isSelected : undefined}
-                  tabIndex={isReady ? 0 : undefined}
-                  onKeyDown={(e) => {
-                    if (isReady && (e.key === 'Enter' || e.key === ' ')) {
-                      e.preventDefault();
-                      toggleDocSelection(doc.id);
-                    }
-                  }}
-                >
-                  {isReady && (
-                    <div
-                      className={`doc-item-checkbox${isSelected ? ' checked' : ''}`}
-                      aria-hidden="true"
-                    >
-                      {isSelected && <CheckIcon />}
-                    </div>
-                  )}
-                  <span className="doc-item-icon" aria-hidden="true"><PdfIcon /></span>
-                  <div className="doc-item-info">
-                    <div className="doc-item-name" title={doc.filename}>{doc.filename}</div>
-                    <div className="doc-item-meta">
-                      <span className="doc-item-meta-text">{formatBytes(doc.file_size)}</span>
-                      {doc.page_count && (
-                        <span className="doc-item-meta-text">· {doc.page_count} pages</span>
-                      )}
-                      <StatusBadge status={doc.status} />
-                    </div>
-                    {doc.processing_error && (
-                      <div className="doc-item-meta-text" title={doc.processing_error}>
-                        {doc.processing_error}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    className="doc-item-delete"
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteDocument(doc.id);
-                    }}
-                    aria-label={`Delete ${doc.filename}`}
-                    title="Delete document"
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-              );
-            })}
-
-            {/* Start Chat button */}
-            {selectedDocIds.length > 0 && readyDocs.length > 0 && (
-              <button
-                id="start-chat-btn"
-                className="btn btn-primary start-chat-btn"
-                type="button"
-                onClick={handleStartChat}
-              >
-                <ChatIcon />
-                Start Chatting with {selectedDocIds.length} Document{selectedDocIds.length !== 1 ? 's' : ''}
-              </button>
             )}
           </div>
-        ) : null}
+
+          {documentsLoading ? (
+            <>
+              <div className="skeleton" style={{ height: 56, borderRadius: 8 }} />
+              <div className="skeleton" style={{ height: 56, borderRadius: 8 }} />
+              <div className="skeleton" style={{ height: 56, borderRadius: 8 }} />
+            </>
+          ) : documents.length > 0 ? (
+            <>
+              {documents.map((doc) => {
+                const isSelected = selectedDocIds.includes(doc.id);
+                const isReady = doc.status === 'ready';
+                return (
+                  <div
+                    key={doc.id}
+                    className="doc-item"
+                    onClick={() => isReady && toggleDocSelection(doc.id)}
+                    style={{ cursor: isReady ? 'pointer' : 'default' }}
+                    role={isReady ? 'checkbox' : undefined}
+                    aria-checked={isReady ? isSelected : undefined}
+                    tabIndex={isReady ? 0 : undefined}
+                    onKeyDown={(e) => {
+                      if (isReady && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        toggleDocSelection(doc.id);
+                      }
+                    }}
+                  >
+                    {isReady && (
+                      <div
+                        className={`doc-item-checkbox${isSelected ? ' checked' : ''}`}
+                        aria-hidden="true"
+                      >
+                        {isSelected && <CheckIcon />}
+                      </div>
+                    )}
+                    <span className="doc-item-icon" aria-hidden="true"><PdfIcon /></span>
+                    <div className="doc-item-info">
+                      <div className="doc-item-name" title={doc.filename}>{doc.filename}</div>
+                      <div className="doc-item-meta">
+                        <span className="doc-item-meta-text">{formatBytes(doc.file_size)}</span>
+                        {doc.page_count && (
+                          <span className="doc-item-meta-text">· {doc.page_count} pages</span>
+                        )}
+                        <StatusBadge status={doc.status} />
+                      </div>
+                      {doc.processing_error && (
+                        <div className="doc-item-meta-text" title={doc.processing_error}>
+                          {doc.processing_error}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      className="doc-item-delete"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteDocument(doc.id);
+                      }}
+                      aria-label={`Delete ${doc.filename}`}
+                      title="Delete document"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Start Chat button */}
+              {selectedDocIds.length > 0 && readyDocs.length > 0 && (
+                <button
+                  id="start-chat-btn"
+                  className="btn btn-primary start-chat-btn"
+                  type="button"
+                  onClick={handleStartChat}
+                >
+                  <ChatIcon />
+                  Start Chatting with {selectedDocIds.length} Document{selectedDocIds.length !== 1 ? 's' : ''}
+                </button>
+              )}
+            </>
+          ) : (
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
+              No documents yet. Upload a PDF above to get started.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

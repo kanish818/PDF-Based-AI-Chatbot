@@ -1083,10 +1083,11 @@ body::before {
 .upload-panel {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 40px;
+  padding: 40px 40px 60px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .upload-panel-inner {
@@ -1095,6 +1096,8 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  /* push content down slightly so hero isn't flush against top */
+  padding-top: 24px;
 }
 
 .upload-hero {
