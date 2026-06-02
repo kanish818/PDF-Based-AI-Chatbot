@@ -71,6 +71,10 @@ def embed_texts(
                 break
             except Exception as exc:
                 last_exc = exc
+                if "429" in str(exc) or "Too Many Requests" in str(exc):
+                    logger.error("Rate limit hit (429). Fast failing.")
+                    raise RuntimeError("Google API Rate Limit (429) hit. Try again later.") from exc
+                
                 wait = (attempt + 1) * 2
                 logger.warning(
                     "Embedding attempt %d failed: %s. Retrying in %ds…",
