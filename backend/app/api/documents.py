@@ -64,17 +64,19 @@ def _process_document(file_path: str, doc_id: int, user_id: int) -> None:
         # Parse
         pages = parse_pdf(file_path)
         page_count = len(pages)
+        logger.info("Parsed %d pages for doc_id=%d.", page_count, doc_id)
 
         # Chunk
         filename = doc.filename
         chunks = chunk_text(pages, filename)
         if not chunks:
             raise RuntimeError(
-                "No searchable text could be extracted from this PDF. "
-                "Try a clearer PDF or an OCR-friendly scan."
+                "No searchable text could be extracted. Try a clearer PDF or enable OCR."
             )
 
-        # Embed
+        logger.info("Created %d chunks for doc_id=%d. Starting embedding…", len(chunks), doc_id)
+
+        # Embed — this is the slow step (API calls)
         texts = [c["text"] for c in chunks]
         embeddings = embed_texts(texts, task_type="retrieval_document")
 
@@ -86,21 +88,25 @@ def _process_document(file_path: str, doc_id: int, user_id: int) -> None:
             doc_id=doc_id,
         )
 
-        # Update DB
+        # Mark ready
         doc.page_count = page_count
         doc.status = "ready"
         db.commit()
-        logger.info("Document id=%d processed successfully (%d pages, %d chunks).", doc_id, page_count, len(chunks))
+        logger.info(
+            "Document id=%d processed successfully (%d pages, %d chunks).",
+            doc_id, page_count, len(chunks),
+        )
 
     except Exception as exc:
-        logger.error("Document processing failed for doc_id=%d: %s", doc_id, exc)
+        logger.error("Document processing failed for doc_id=%d: %s", doc_id, exc, exc_info=True)
         try:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                doc.status = "error"
+            # Re-fetch in case session state is dirty
+            doc2 = db.query(Document).filter(Document.id == doc_id).first()
+            if doc2:
+                doc2.status = "error"
                 db.commit()
-        except Exception:
-            pass
+        except Exception as db_exc:
+            logger.error("Could not mark doc_id=%d as error: %s", doc_id, db_exc)
     finally:
         db.close()
 
