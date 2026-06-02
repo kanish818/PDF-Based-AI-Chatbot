@@ -1,41 +1,42 @@
 """
 Embedder Service
-Generates dense vector embeddings using Google's Gemini embedding model.
-Supports both permanent API keys (AIzaSy...) and OAuth tokens (AQ...).
-Batches requests in groups of 20 to stay well within Render's 30s timeout.
+Generates dense vector embeddings using Google's new google-genai SDK.
+Uses the native x-goog-api-key authentication (compatible with AQ. keys).
+Batches requests in groups of 20 to stay within Render's 30s timeout.
 """
 
 import logging
 import time
 from typing import List
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Configure the SDK once at import time
-genai.configure(api_key=settings.GEMINI_API_KEY)
+# Initialise client once — uses x-goog-api-key header (supports AQ. keys)
+_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-# gemini-embedding-001 is the current supported embedding model
-EMBEDDING_MODEL = "models/gemini-embedding-001"
-# Smaller batch size: avoids Render free-tier 30s request timeouts
+# gemini-embedding-2 is the latest Google embedding model (3072 dims)
+EMBEDDING_MODEL = "gemini-embedding-2"
+# Small batch size: avoids Render free-tier 30s request timeouts
 BATCH_SIZE = 20
-# Delay between batches (seconds) to respect rate limits on free API tier
+# Delay between batches to respect free-tier rate limits
 INTER_BATCH_DELAY = 0.5
 
 
 def embed_texts(
     texts: List[str],
-    task_type: str = "retrieval_document",
+    task_type: str = "RETRIEVAL_DOCUMENT",
 ) -> List[List[float]]:
     """
     Embed a list of texts in small batches with retry logic.
 
     Args:
         texts:     List of strings to embed.
-        task_type: Gemini task type hint.
+        task_type: Gemini task type hint (RETRIEVAL_DOCUMENT | RETRIEVAL_QUERY).
 
     Returns:
         List of embedding vectors (each a list of floats).
@@ -58,17 +59,14 @@ def embed_texts(
         last_exc = None
         for attempt in range(3):  # up to 3 retries
             try:
-                result = genai.embed_content(
+                result = _client.models.embed_content(
                     model=EMBEDDING_MODEL,
-                    content=batch,
-                    task_type=task_type,
+                    contents=batch,
+                    config=types.EmbedContentConfig(task_type=task_type),
                 )
-                # The SDK returns {"embedding": [...]} for a list of inputs
-                raw = result.get("embedding", [])
-                # Normalise: single-text returns a flat list, multi-text returns list-of-lists
-                if raw and not isinstance(raw[0], list):
-                    raw = [raw]
-                all_embeddings.extend(raw)
+                # New SDK returns a list of ContentEmbedding objects
+                batch_embeddings = [e.values for e in result.embeddings]
+                all_embeddings.extend(batch_embeddings)
                 last_exc = None
                 break
             except Exception as exc:
@@ -84,7 +82,7 @@ def embed_texts(
             logger.error("Embedding batch failed after 3 attempts: %s", last_exc)
             raise RuntimeError(f"Embedding failed: {last_exc}") from last_exc
 
-        # Throttle between batches to avoid API rate-limit errors
+        # Throttle between batches
         if batch_start + BATCH_SIZE < total:
             time.sleep(INTER_BATCH_DELAY)
 
@@ -101,5 +99,5 @@ def embed_query(query: str) -> List[float]:
     Returns:
         A single embedding vector (list of floats).
     """
-    embeddings = embed_texts([query], task_type="retrieval_query")
+    embeddings = embed_texts([query], task_type="RETRIEVAL_QUERY")
     return embeddings[0]
