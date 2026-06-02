@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # Initialise client once — uses x-goog-api-key header (supports AQ. keys)
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-# text-embedding-004: fast, 768-dim, ideal for RAG retrieval on free tier
-EMBEDDING_MODEL = "text-embedding-004"
+# gemini-embedding-2: confirmed working with google-genai v1beta SDK (3072 dims)
+EMBEDDING_MODEL = "gemini-embedding-2"
 # Gemini embedding API supports up to 100 texts per call — use it fully
 BATCH_SIZE = 100
 # Minimal delay between batches — only needed to avoid 429s
