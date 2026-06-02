@@ -1,0 +1,54 @@
+services:
+  - type: web
+    runtime: docker
+    name: documind-backend
+    plan: starter
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "1440"
+      - key: FRONTEND_URL
+        fromService:
+          type: web
+          name: documind-frontend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "50"
+      - key: CHROMA_PERSIST_DIR
+        value: /app/storage/chroma_db
+      - key: UPLOAD_DIR
+        value: /app/storage/uploads
+      - key: DATABASE_URL
+        value: sqlite:////app/storage/chatbot.db
+    disk:
+      name: documind-data
+      mountPath: /app/storage
+      sizeGB: 5
+
+  - type: web
+    runtime: docker
+    name: documind-frontend
+    plan: free
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    healthCheckPath: /
+    envVars:
+      - key: BACKEND_HOSTPORT
+        fromService:
+          type: web
+          name: documind-backend
+          property: hostport

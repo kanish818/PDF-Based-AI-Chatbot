@@ -1,0 +1,53 @@
+[
+  {
+    "id": "resume_name_fact",
+    "question": "What is the candidate's name?",
+    "question_type": "fact",
+    "document_filenames": [
+      "replace_with_uploaded_resume.pdf"
+    ],
+    "expected_sources": [
+      {
+        "filename": "replace_with_uploaded_resume.pdf",
+        "page_num": 1
+      }
+    ],
+    "expected_answer_contains": [
+      "replace with the expected person name"
+    ],
+    "should_answer": true,
+    "notes": "Direct fact lookup."
+  },
+  {
+    "id": "tutorial_redux_absence",
+    "question": "Does the document mention Redux?",
+    "question_type": "no_answer",
+    "document_filenames": [
+      "replace_with_uploaded_tutorial.pdf"
+    ],
+    "expected_sources": [],
+    "expected_answer_contains": [],
+    "should_answer": false,
+    "notes": "Use for no-answer behavior checks."
+  },
+  {
+    "id": "plan_action_items",
+    "question": "Give me the main action items from this PDF.",
+    "question_type": "action_items",
+    "document_filenames": [
+      "replace_with_uploaded_plan.pdf"
+    ],
+    "expected_sources": [
+      {
+        "filename": "replace_with_uploaded_plan.pdf",
+        "page_num": 1
+      }
+    ],
+    "expected_answer_contains": [
+      "replace with one expected action phrase",
+      "replace with another expected action phrase"
+    ],
+    "should_answer": true,
+    "notes": "Checks summary/action retrieval quality."
+  }
+]
