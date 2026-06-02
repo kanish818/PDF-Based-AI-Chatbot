@@ -7,6 +7,7 @@ Batches requests in groups of 20 to stay within Render's 30s timeout.
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import List
 
 from google import genai
@@ -25,11 +26,13 @@ EMBEDDING_MODEL = "gemini-embedding-2"
 BATCH_SIZE = 20
 # Delay between batches to respect free-tier rate limits
 INTER_BATCH_DELAY = 0.5
+EMBED_TIMEOUT_SECONDS = 45
 
 
 def embed_texts(
     texts: List[str],
     task_type: str = "RETRIEVAL_DOCUMENT",
+    heartbeat=None,
 ) -> List[List[float]]:
     """
     Embed a list of texts in small batches with retry logic.
@@ -58,17 +61,26 @@ def embed_texts(
 
         last_exc = None
         for attempt in range(3):  # up to 3 retries
+            executor = None
             try:
-                result = _client.models.embed_content(
+                if heartbeat:
+                    heartbeat()
+                executor = ThreadPoolExecutor(max_workers=1)
+                future = executor.submit(
+                    _client.models.embed_content,
                     model=EMBEDDING_MODEL,
                     contents=batch,
                     config=types.EmbedContentConfig(task_type=task_type),
                 )
+                result = future.result(timeout=EMBED_TIMEOUT_SECONDS)
                 # New SDK returns a list of ContentEmbedding objects
                 batch_embeddings = [e.values for e in result.embeddings]
                 all_embeddings.extend(batch_embeddings)
                 last_exc = None
                 break
+            except FuturesTimeoutError as exc:
+                last_exc = exc
+                logger.error("Embedding request timed out after %ds.", EMBED_TIMEOUT_SECONDS)
             except Exception as exc:
                 last_exc = exc
                 if "429" in str(exc) or "Too Many Requests" in str(exc):
@@ -81,6 +93,9 @@ def embed_texts(
                     attempt + 1, exc, wait,
                 )
                 time.sleep(wait)
+            finally:
+                if executor is not None:
+                    executor.shutdown(wait=False, cancel_futures=True)
 
         if last_exc is not None:
             logger.error("Embedding batch failed after 3 attempts: %s", last_exc)

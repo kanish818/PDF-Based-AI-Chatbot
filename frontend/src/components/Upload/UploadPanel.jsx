@@ -355,6 +355,11 @@ export default function UploadPanel({
                       )}
                       <StatusBadge status={doc.status} />
                     </div>
+                    {doc.processing_error && (
+                      <div className="doc-item-meta-text" title={doc.processing_error}>
+                        {doc.processing_error}
+                      </div>
+                    )}
                   </div>
                   <button
                     className="doc-item-delete"

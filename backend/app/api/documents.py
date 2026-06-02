@@ -1,6 +1,7 @@
 """
 Documents Router
-Handles PDF upload, listing, and deletion. Processing runs as a background task.
+Handles PDF upload, listing, and deletion. Processing is queued via the
+document processor service so work survives request completion.
 """
 
 import logging
@@ -8,7 +9,7 @@ import os
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -17,9 +18,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.document import Document
 from app.models.user import User
-from app.services.pdf_parser import parse_pdf
-from app.services.chunker import chunk_text
-from app.services.embedder import embed_texts
+from app.services.document_processor import processor
 from app.services import vector_store
 
 logger = logging.getLogger(__name__)
@@ -37,78 +36,11 @@ class DocumentOut(BaseModel):
     file_size: int
     page_count: Optional[int] = None
     status: str
+    processing_error: Optional[str] = None
     created_at: str
+    updated_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
-
-
-# ── Background processing ──────────────────────────────────────────────────────
-
-
-def _process_document(file_path: str, doc_id: int, user_id: int) -> None:
-    """
-    Background task: parse → chunk → embed → store in ChromaDB → update DB status.
-    Uses its own DB session (background tasks run outside request scope).
-    """
-    from app.core.database import SessionLocal
-
-    db = SessionLocal()
-    try:
-        doc = db.query(Document).filter(Document.id == doc_id).first()
-        if not doc:
-            logger.error("Background task: document id=%d not found.", doc_id)
-            return
-
-        logger.info("Starting processing for doc_id=%d path=%s", doc_id, file_path)
-
-        # Parse
-        pages = parse_pdf(file_path)
-        page_count = len(pages)
-        logger.info("Parsed %d pages for doc_id=%d.", page_count, doc_id)
-
-        # Chunk
-        filename = doc.filename
-        chunks = chunk_text(pages, filename)
-        if not chunks:
-            raise RuntimeError(
-                "No searchable text could be extracted. Try a clearer PDF or enable OCR."
-            )
-
-        logger.info("Created %d chunks for doc_id=%d. Starting embedding…", len(chunks), doc_id)
-
-        # Embed — this is the slow step (API calls)
-        texts = [c["text"] for c in chunks]
-        embeddings = embed_texts(texts, task_type="retrieval_document")
-
-        # Store in ChromaDB
-        vector_store.add_chunks(
-            chunks=chunks,
-            embeddings=embeddings,
-            user_id=user_id,
-            doc_id=doc_id,
-        )
-
-        # Mark ready
-        doc.page_count = page_count
-        doc.status = "ready"
-        db.commit()
-        logger.info(
-            "Document id=%d processed successfully (%d pages, %d chunks).",
-            doc_id, page_count, len(chunks),
-        )
-
-    except Exception as exc:
-        logger.error("Document processing failed for doc_id=%d: %s", doc_id, exc, exc_info=True)
-        try:
-            # Re-fetch in case session state is dirty
-            doc2 = db.query(Document).filter(Document.id == doc_id).first()
-            if doc2:
-                doc2.status = "error"
-                db.commit()
-        except Exception as db_exc:
-            logger.error("Could not mark doc_id=%d as error: %s", doc_id, db_exc)
-    finally:
-        db.close()
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -116,7 +48,6 @@ def _process_document(file_path: str, doc_id: int, user_id: int) -> None:
 
 @router.post("/upload", response_model=List[DocumentOut], status_code=status.HTTP_202_ACCEPTED)
 async def upload_documents(
-    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -124,7 +55,7 @@ async def upload_documents(
     """
     Upload one or more PDF files. Each file is saved to disk and processed
     asynchronously (parse → embed → store). Returns document records immediately
-    with status='processing'.
+    with status='queued'.
     """
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     created_docs: List[Document] = []
@@ -166,21 +97,16 @@ async def upload_documents(
         doc = Document(
             user_id=current_user.id,
             filename=upload_file.filename,
+            storage_path=file_path,
             file_size=file_size,
-            status="processing",
+            status="queued",
             page_count=0,
         )
         db.add(doc)
         db.commit()
         db.refresh(doc)
 
-        # Enqueue background processing
-        background_tasks.add_task(
-            _process_document,
-            file_path=file_path,
-            doc_id=doc.id,
-            user_id=current_user.id,
-        )
+        processor.enqueue(doc.id)
 
         created_docs.append(doc)
         logger.info("Queued doc_id=%d '%s' for processing.", doc.id, upload_file.filename)
@@ -192,7 +118,9 @@ async def upload_documents(
             file_size=d.file_size,
             page_count=d.page_count,
             status=d.status,
+            processing_error=d.processing_error,
             created_at=d.created_at.isoformat() if d.created_at else "",
+            updated_at=d.updated_at.isoformat() if d.updated_at else "",
         )
         for d in created_docs
     ]
@@ -217,7 +145,9 @@ def list_documents(
             file_size=d.file_size,
             page_count=d.page_count,
             status=d.status,
+            processing_error=d.processing_error,
             created_at=d.created_at.isoformat() if d.created_at else "",
+            updated_at=d.updated_at.isoformat() if d.updated_at else "",
         )
         for d in docs
     ]
@@ -240,6 +170,12 @@ def delete_document(
 
     # Remove from vector store
     vector_store.delete_document(user_id=current_user.id, doc_id=doc_id)
+
+    if doc.storage_path and os.path.exists(doc.storage_path):
+        try:
+            os.remove(doc.storage_path)
+        except OSError as exc:
+            logger.warning("Could not remove file for doc_id=%d: %s", doc_id, exc)
 
     # Remove from DB
     db.delete(doc)

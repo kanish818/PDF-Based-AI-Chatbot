@@ -3,23 +3,17 @@ LLM Service
 Provides streaming chat completions via the Groq API using llama-3.3-70b-versatile.
 """
 
+import json
 import logging
 from typing import List, Dict, Any, Generator, Optional
 
-from groq import Groq
+import httpx
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_groq_client: Optional[Groq] = None
-
-
-def _get_client() -> Groq:
-    global _groq_client
-    if _groq_client is None:
-        _groq_client = Groq(api_key=settings.GROQ_API_KEY)
-    return _groq_client
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -79,7 +73,6 @@ def stream_chat(
     Yields:
         Incremental text chunks from the model.
     """
-    client = _get_client()
     context = _build_context(context_chunks)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context)
 
@@ -96,17 +89,40 @@ def stream_chat(
     )
 
     try:
-        stream = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            stream=True,
-            temperature=0.3,
-            max_tokens=2048,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta and delta.content:
-                yield delta.content
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": messages,
+            "stream": True,
+            "temperature": 0.3,
+            "max_tokens": 2048,
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        with httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0)) as client:
+            with client.stream("POST", GROQ_URL, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            logger.warning("Skipping malformed Groq stream payload: %s", data)
+                            continue
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            yield content
     except Exception as exc:
         logger.error("Groq streaming error: %s", exc)
         yield f"\n\n[Error generating response: {exc}]"

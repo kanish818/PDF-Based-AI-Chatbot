@@ -7,7 +7,7 @@ Falls back to OCR (Tesseract) when extracted text is too short.
 import logging
 import re
 import unicodedata
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable, Optional
 
 import fitz  # PyMuPDF
 from PIL import Image
@@ -17,6 +17,8 @@ import io
 logger = logging.getLogger(__name__)
 
 OCR_THRESHOLD = 50  # characters below which we try OCR
+OCR_TIMEOUT_SECONDS = 25
+OCR_SCALE = 2.5
 
 
 def _clean_text(text: str) -> str:
@@ -62,7 +64,7 @@ def _should_try_ocr(text: str) -> bool:
 
 
 def _ocr_page(page: fitz.Page) -> str:
-    matrix = fitz.Matrix(3, 3)
+    matrix = fitz.Matrix(OCR_SCALE, OCR_SCALE)
     pixmap = page.get_pixmap(matrix=matrix)
     img_bytes = pixmap.tobytes("png")
     pil_image = Image.open(io.BytesIO(img_bytes))
@@ -71,6 +73,7 @@ def _ocr_page(page: fitz.Page) -> str:
             pil_image,
             lang="eng",
             config="--oem 3 --psm 6",
+            timeout=OCR_TIMEOUT_SECONDS,
         )
     )
 
@@ -120,7 +123,10 @@ def _strip_repeated_margins(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return cleaned_pages
 
 
-def parse_pdf(file_path: str) -> List[Dict[str, Any]]:
+def parse_pdf(
+    file_path: str,
+    heartbeat: Optional[Callable[[], None]] = None,
+) -> List[Dict[str, Any]]:
     """
     Parse a PDF file and return per-page text.
 
@@ -142,6 +148,8 @@ def parse_pdf(file_path: str) -> List[Dict[str, Any]]:
     for page_index in range(len(doc)):
         page = doc[page_index]
         page_num = page_index + 1
+        if heartbeat:
+            heartbeat()
 
         # Primary: sorted block extraction for better layout fidelity.
         try:

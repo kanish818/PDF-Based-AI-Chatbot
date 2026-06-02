@@ -7,10 +7,12 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.database import create_tables
+from app.core.database import create_tables, engine
 from app.api import auth, documents, chat
+from app.services.document_processor import processor
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -67,8 +69,15 @@ def on_startup():
 
     # Create DB tables
     create_tables()
+    _ensure_document_columns()
+    processor.start()
 
     logger.info("Startup complete. API docs at /docs")
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    processor.stop()
 
 
 # ── Health check ───────────────────────────────────────────────────────────────
@@ -76,3 +85,36 @@ def on_startup():
 def health_check():
     """Simple health-check endpoint."""
     return {"status": "ok", "service": "PDF AI Chatbot API", "version": "1.0.0"}
+
+
+def _ensure_document_columns() -> None:
+    required_columns = {
+        "storage_path": "TEXT",
+        "processing_attempts": "INTEGER NOT NULL DEFAULT 0",
+        "processing_started_at": "DATETIME",
+        "processing_heartbeat_at": "DATETIME",
+        "processing_error": "TEXT",
+        "updated_at": "DATETIME",
+    }
+
+    with engine.begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info(documents)")).fetchall()
+        existing_columns = {row[1] for row in rows}
+
+        for column_name, column_sql in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            connection.execute(
+                text(f"ALTER TABLE documents ADD COLUMN {column_name} {column_sql}")
+            )
+            logger.info("Added missing documents.%s column.", column_name)
+
+        connection.execute(
+            text(
+                """
+                UPDATE documents
+                SET updated_at = COALESCE(updated_at, created_at),
+                    processing_attempts = COALESCE(processing_attempts, 0)
+                """
+            )
+        )

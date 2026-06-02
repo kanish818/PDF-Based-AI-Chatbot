@@ -6,6 +6,17 @@ import {
 } from '../services/api';
 
 const POLL_INTERVAL_MS = 3000;
+const STALE_PROCESSING_MS = 5 * 60 * 1000;
+
+function isDocumentStale(doc) {
+  if (!(doc.status === 'processing' || doc.status === 'pending' || doc.status === 'queued')) {
+    return false;
+  }
+  const updatedAt = doc.updated_at || doc.created_at;
+  if (!updatedAt) return false;
+  const updatedTs = new Date(updatedAt).getTime();
+  return Number.isFinite(updatedTs) && Date.now() - updatedTs > STALE_PROCESSING_MS;
+}
 
 export function useDocuments() {
   const [documents, setDocuments] = useState([]);
@@ -35,6 +46,12 @@ export function useDocuments() {
       const docs = await apiGetDocuments();
       if (mountedRef.current) {
         setDocuments(docs);
+        const staleDoc = docs.find(isDocumentStale);
+        if (staleDoc) {
+          setError(
+            `Document "${staleDoc.filename}" looks stuck in processing. Refresh or re-upload if it does not recover.`
+          );
+        }
       }
       return docs;
     } catch (err) {
@@ -54,7 +71,7 @@ export function useDocuments() {
   // ── Polling: re-fetch when any document is processing ──────────────────────
   useEffect(() => {
     const hasProcessing = documents.some(
-      (d) => d.status === 'processing' || d.status === 'pending'
+      (d) => d.status === 'processing' || d.status === 'pending' || d.status === 'queued'
     );
 
     if (hasProcessing) {
