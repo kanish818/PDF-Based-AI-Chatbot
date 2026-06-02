@@ -2,7 +2,7 @@
 Embedder Service
 Generates dense vector embeddings using Google's new google-genai SDK.
 Uses the native x-goog-api-key authentication (compatible with AQ. keys).
-Batches requests in groups of 20 to stay within Render's 30s timeout.
+Batches requests in groups of 100 to minimise round-trips.
 """
 
 import logging
@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 # Initialise client once — uses x-goog-api-key header (supports AQ. keys)
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-# gemini-embedding-2 is the latest Google embedding model (3072 dims)
-EMBEDDING_MODEL = "gemini-embedding-2"
-# Small batch size: avoids Render free-tier 30s request timeouts
-BATCH_SIZE = 20
-# Delay between batches to respect free-tier rate limits
-INTER_BATCH_DELAY = 0.5
+# text-embedding-004: fast, 768-dim, ideal for RAG retrieval on free tier
+EMBEDDING_MODEL = "text-embedding-004"
+# Gemini embedding API supports up to 100 texts per call — use it fully
+BATCH_SIZE = 100
+# Minimal delay between batches — only needed to avoid 429s
+INTER_BATCH_DELAY = 0.1
 EMBED_TIMEOUT_SECONDS = 45
 
 
