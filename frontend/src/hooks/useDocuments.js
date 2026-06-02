@@ -5,7 +5,7 @@ import {
   deleteDocument as apiDeleteDocument,
 } from '../services/api';
 
-const POLL_INTERVAL_MS = 3000;
+const POLL_INTERVAL_MS = 1000;
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
 
 function isDocumentStale(doc) {
@@ -36,7 +36,7 @@ export function useDocuments() {
         clearTimeout(pollTimerRef.current);
       }
     };
-  }, []);
+  }, [fetchDocuments]);
 
   // ── Fetch documents ─────────────────────────────────────────────────────────
   const fetchDocuments = useCallback(async () => {
@@ -119,6 +119,10 @@ export function useDocuments() {
         });
         setUploadProgress(100);
       }
+
+      // Immediately refresh from the backend so queued uploads transition
+      // into processing/ready without waiting for the next poll tick.
+      await fetchDocuments();
 
       return uploaded;
     } catch (err) {

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_STALE_MINUTES = 10
 MAX_PROCESSING_ATTEMPTS = 3
+SUPERVISOR_SCAN_INTERVAL_SECONDS = 15
 
 
 def utcnow() -> datetime:
@@ -42,28 +43,47 @@ class DocumentProcessor:
         self._queued_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
+        self._supervisor_thread: Optional[threading.Thread] = None
 
     def start(self) -> None:
-        self.reconcile_stale_documents()
-        if self._worker_thread and self._worker_thread.is_alive():
-            return
         self._stop_event.clear()
-        self._worker_thread = threading.Thread(
-            target=self._worker_loop,
-            name="document-processor",
-            daemon=True,
-        )
-        self._worker_thread.start()
-        self.enqueue_pending_documents()
+        self.ensure_running()
+        self._start_supervisor()
+        self.recover_and_enqueue_pending_documents()
         logger.info("Document processor started.")
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=5)
+        if self._supervisor_thread and self._supervisor_thread.is_alive():
+            self._supervisor_thread.join(timeout=5)
         logger.info("Document processor stopped.")
 
+    def ensure_running(self) -> None:
+        if self._worker_thread and self._worker_thread.is_alive():
+            return
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            name="document-processor",
+            daemon=True,
+        )
+        self._worker_thread.start()
+        logger.warning("Document processor worker started or restarted.")
+
+    def _start_supervisor(self) -> None:
+        if self._supervisor_thread and self._supervisor_thread.is_alive():
+            return
+        self._supervisor_thread = threading.Thread(
+            target=self._supervisor_loop,
+            name="document-processor-supervisor",
+            daemon=True,
+        )
+        self._supervisor_thread.start()
+        logger.info("Document processor supervisor started.")
+
     def enqueue(self, doc_id: int) -> None:
+        self.ensure_running()
         with self._queued_lock:
             if doc_id in self._queued_ids:
                 return
@@ -117,6 +137,18 @@ class DocumentProcessor:
                 logger.warning("Recovered %d stale document jobs on startup.", len(stale_docs))
         finally:
             db.close()
+
+    def recover_and_enqueue_pending_documents(self) -> None:
+        self.reconcile_stale_documents()
+        self.enqueue_pending_documents()
+
+    def _supervisor_loop(self) -> None:
+        while not self._stop_event.wait(SUPERVISOR_SCAN_INTERVAL_SECONDS):
+            try:
+                self.ensure_running()
+                self.recover_and_enqueue_pending_documents()
+            except Exception:
+                logger.exception("Document processor supervisor iteration failed.")
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():

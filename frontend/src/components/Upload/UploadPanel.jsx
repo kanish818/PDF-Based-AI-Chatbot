@@ -81,7 +81,7 @@ function StatusBadge({ status }) {
   if (status === 'ready') {
     return <span className="badge badge-success">Ready</span>;
   }
-  if (status === 'processing' || status === 'pending') {
+  if (status === 'processing' || status === 'pending' || status === 'queued') {
     return (
       <span className="badge badge-warning">
         <span className="spinner spinner-sm" style={{ borderTopColor: 'var(--warning)', borderColor: 'rgba(245,158,11,0.2)', width: '10px', height: '10px' }} />
