@@ -53,7 +53,7 @@ class SupabaseStorageService:
 
             create_response = client.post(
                 f"{self.base_url}/storage/v1/bucket",
-                headers=self._headers("application/json"),
+                headers=self._headers(content_type="application/json"),
                 json={"id": self.bucket, "name": self.bucket, "public": False},
             )
             if create_response.status_code not in (200, 201, 409):
@@ -66,7 +66,7 @@ class SupabaseStorageService:
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(
                 f"{self.base_url}/storage/v1/object/{self.bucket}/{object_key}",
-                headers={**self._headers(content_type), "x-upsert": "false"},
+                headers={**self._headers(content_type=content_type), "x-upsert": "false"},
                 content=content,
             )
             if response.status_code not in (200, 201):

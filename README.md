@@ -37,33 +37,30 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                  FRONTEND (React + Vite)                     │
-│   Upload UI │ Chat + Streaming │ Source Panel │ Auth UI      │
+│                 FRONTEND (React + Vite)                    │
+│   Upload UI │ Chat + SSE Streaming │ Sources │ Auth        │
 └──────────────────────┬──────────────────────────────────────┘
-                       │  REST API + SSE (streaming)
+                       │  REST API + SSE
 ┌──────────────────────▼──────────────────────────────────────┐
-│                  BACKEND (Python FastAPI)                     │
-│                                                              │
-│  ┌─────────────┐   ┌──────────────────┐  ┌───────────────┐  │
-│  │  PDF Parser  │   │   Embedder        │  │  Chat Engine  │  │
-│  │  PyMuPDF     │   │  Gemini           │  │  Groq LLM     │  │
-│  │  +Tesseract  │   │  gemini-          │  │  llama-3.3-   │  │
-│  │  (OCR)       │   │  embedding-001    │  │  70b          │  │
-│  └──────┬───────┘   └────────┬──────────┘  └───────┬───────┘  │
-│         │                    │                      │          │
-│  ┌──────▼────────────────────▼──────────────────────▼───────┐ │
-│  │        ChromaDB (vector)  +  BM25 (keyword)              │ │
-│  │              → RRF Hybrid Fusion → Top 5 chunks           │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │       SQLite: users + conversations + messages            │ │
-│  └───────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │      Docker Compose      │
-          │  backend + frontend      │
-          └─────────────────────────┘
+│                 BACKEND (FastAPI on Render)                │
+│                                                             │
+│  ┌─────────────┐  ┌──────────────────┐  ┌────────────────┐ │
+│  │ PDF Parser  │  │ Embedder         │  │ Chat Engine    │ │
+│  │ PyMuPDF     │  │ Gemini           │  │ Groq Llama 3.3 │ │
+│  │ + Tesseract │  │ text-embedding   │  │ 70B streaming  │ │
+│  └──────┬──────┘  └────────┬─────────┘  └───────┬────────┘ │
+│         │                  │                    │          │
+│  ┌──────▼──────────────────▼────────────────────▼────────┐ │
+│  │ Hybrid Retrieval: pgvector + BM25 + RRF + reranking   │ │
+│  └────────────────────────────────────────────────────────┘ │
+└───────────────┬───────────────────────────────┬─────────────┘
+                │                               │
+     ┌──────────▼──────────┐         ┌─────────▼──────────┐
+     │ Supabase Postgres   │         │ Supabase Storage   │
+     │ users / docs / chat │         │ private PDF files  │
+     │ chunks / embeddings │         │ restart-safe       │
+     │ pgvector enabled    │         │                    │
+     └─────────────────────┘         └────────────────────┘
 ```
 
 ---
@@ -75,13 +72,14 @@
 | Frontend | React 18 + Vite 5 |
 | Backend | Python 3.11 + FastAPI |
 | LLM | Groq `llama-3.3-70b-versatile` |
-| Embeddings | Google Gemini `gemini-embedding-001` |
-| Vector DB | ChromaDB (persistent) |
+| Embeddings | Google Gemini `text-embedding-004` |
+| Vector DB | Supabase Postgres + `pgvector` |
 | Keyword Search | BM25 (`rank-bm25`) |
 | PDF Parsing | PyMuPDF (fitz) |
 | OCR | Tesseract + pytesseract |
 | Auth | JWT + Google OAuth 2.0 |
-| Database | SQLite + SQLAlchemy |
+| Database | Supabase Postgres + SQLAlchemy |
+| File Storage | Supabase Storage |
 | Deployment | Docker Compose + Render.com |
 
 ---
@@ -97,7 +95,7 @@ Documents are split using a **section-aware paragraph chunker**:
 Each chunk stores metadata such as `filename`, `page_num`, `chunk_index`, `section_heading`, `doc_id`, and `user_id`.
 
 ### Embedding Model
-**Gemini `gemini-embedding-001`** is used because:
+**Gemini `text-embedding-004`** is used because:
 - Supports task-type hints: `RETRIEVAL_DOCUMENT` for indexing, `RETRIEVAL_QUERY` for queries
 - Free tier: 1,500 requests/day on Google AI Studio — sufficient for this use case
 - No local GPU required; runs via API
@@ -105,7 +103,7 @@ Each chunk stores metadata such as `filename`, `page_num`, `chunk_index`, `secti
 ### Retrieval Approach (Hybrid Search)
 We combine two complementary search methods:
 
-1. **Vector Search** (ChromaDB cosine similarity) — top 10 results
+1. **Vector Search** (pgvector cosine similarity) — top 10 results
    - Finds semantically similar content even with different wording
    
 2. **Keyword Search** (BM25) — top 10 results  
@@ -163,13 +161,17 @@ User: {question}
 2. **Configure environment**
    ```bash
    cp .env.example backend/.env
-   # Edit backend/.env with your API keys
+   # Edit backend/.env with your API keys and storage/database values
    ```
    
    Required keys:
    - `GROQ_API_KEY` — from [console.groq.com](https://console.groq.com)
    - `GEMINI_API_KEY` — from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (starts with `AIzaSy...`)
    - `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — from Google Cloud Console
+   - `DATABASE_URL` — SQLite locally or Supabase pooler URL in production
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `SUPABASE_STORAGE_BUCKET`
 
 3. **Run with Docker Compose**
    ```bash
@@ -200,7 +202,7 @@ npm run dev
 
 ---
 
-## 🌐 Deployment (Render.com)
+## 🌐 Deployment (Render.com + Supabase)
 
 This repo includes a Render Blueprint at [`render.yaml`](render.yaml).
 
@@ -209,17 +211,31 @@ Recommended flow:
 1. Push the repo to GitHub.
 2. In Render, choose **New + → Blueprint**.
 3. Select this repository and keep the Blueprint path as `render.yaml`.
-4. Provide only the required secret env vars:
+4. Create a Supabase project and enable `pgvector`.
+5. Create a private Storage bucket named `pdf-documents`.
+6. Provide the required secret env vars in Render:
+   - `DATABASE_URL`
+     - Use the Supabase **Transaction pooler** URL, not the direct IPv6 database URL.
+     - Example:
+       `postgresql://postgres.<project-ref>:<urlencoded-password>@aws-<region>.pooler.supabase.com:6543/postgres`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
    - `GROQ_API_KEY`
    - `GEMINI_API_KEY`
    - `GOOGLE_CLIENT_ID`
    - `GOOGLE_CLIENT_SECRET`
-5. Render creates:
-   - `documind-backend` as a Docker web service with a persistent disk
+7. Render creates:
+   - `documind-backend` as a Docker web service
    - `documind-frontend` as a Docker web service running Nginx
-6. After the first deploy completes, add these Google OAuth settings:
+8. After the first deploy completes, add these Google OAuth settings:
    - Authorized JavaScript origin: `https://documind-frontend-free.onrender.com`
    - Authorized redirect URI: `https://documind-backend-free.onrender.com/api/auth/google/callback`
+
+Why this setup:
+- Render free instances are ephemeral.
+- Supabase Storage keeps PDFs durable across restarts.
+- Supabase Postgres stores chat data, ingestion state, chunks, and embeddings.
+- The backend uses startup reconciliation so queued or interrupted processing resumes safely.
 
 ---
 
@@ -255,7 +271,7 @@ pdf-chatbot/
 
 ## 🧪 Evaluation Workflow
 
-The repo now includes a benchmark runner in [`backend/eval`](backend/eval).
+The repo includes a benchmark runner in [`backend/eval`](backend/eval).
 
 What it measures:
 - `Recall@1`, `Recall@3`, `Recall@5`
