@@ -30,10 +30,7 @@ services:
       - key: JWT_EXPIRE_MINUTES
         value: "1440"
       - key: FRONTEND_URL
-        fromService:
-          type: web
-          name: documind-frontend-static
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://documind-frontend-static.onrender.com
       - key: MAX_UPLOAD_SIZE_MB
         value: "50"
       - key: TEMP_DIR
@@ -45,9 +42,13 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://documind-backend-free.onrender.com/api/:splat
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: VITE_API_ORIGIN
-        fromService:
-          type: web
-          name: documind-backend
-          envVarKey: RENDER_EXTERNAL_URL
+        value: https://documind-backend-free.onrender.com

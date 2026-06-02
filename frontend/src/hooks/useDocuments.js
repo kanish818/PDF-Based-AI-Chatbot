@@ -28,16 +28,6 @@ export function useDocuments() {
   const pollTimerRef = useRef(null);
   const mountedRef = useRef(true);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (pollTimerRef.current) {
-        clearTimeout(pollTimerRef.current);
-      }
-    };
-  }, [fetchDocuments]);
-
   // ── Fetch documents ─────────────────────────────────────────────────────────
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
@@ -66,6 +56,17 @@ export function useDocuments() {
         setLoading(false);
       }
     }
+  }, []);
+
+  // ── Mount / unmount cleanup ─────────────────────────────────────────────────
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+      }
+    };
   }, []);
 
   // ── Polling: re-fetch when any document is processing ──────────────────────
@@ -120,7 +121,7 @@ export function useDocuments() {
         setUploadProgress(100);
       }
 
-      // Immediately refresh from the backend so queued uploads transition
+      // Immediately refresh from backend so queued uploads transition
       // into processing/ready without waiting for the next poll tick.
       await fetchDocuments();
 
@@ -136,13 +137,12 @@ export function useDocuments() {
     } finally {
       if (mountedRef.current) {
         setUploading(false);
-        // Reset progress after a short delay
         setTimeout(() => {
           if (mountedRef.current) setUploadProgress(0);
         }, 1500);
       }
     }
-  }, []);
+  }, [fetchDocuments]);
 
   // ── Delete document ─────────────────────────────────────────────────────────
   const deleteDocument = useCallback(async (id) => {
@@ -155,7 +155,7 @@ export function useDocuments() {
       // Restore on error
       if (mountedRef.current) {
         setError('Failed to delete document.');
-        await fetchDocuments(); // Re-fetch to restore accurate state
+        await fetchDocuments();
       }
     }
   }, [fetchDocuments]);
