@@ -7,6 +7,8 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY nginx.conf /opt/documind/nginx.conf.template
+COPY start-nginx.sh /opt/documind/start-nginx.sh
+RUN chmod +x /opt/documind/start-nginx.sh
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/opt/documind/start-nginx.sh"]
