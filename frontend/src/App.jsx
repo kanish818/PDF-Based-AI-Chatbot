@@ -11,7 +11,7 @@ import SourcePanel from './components/Sources/SourcePanel';
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const { user, loading: authLoading, isAuthenticated, handleGoogleCallback } = useAuth();
+  const { user, loading: authLoading, wakingUp, isAuthenticated, handleGoogleCallback } = useAuth();
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
 
   // ── Documents hook ──────────────────────────────────────────────────────────
@@ -144,7 +144,14 @@ export default function App() {
           </svg>
         </div>
         <span className="spinner spinner-lg spinner-accent" aria-label="Loading…" />
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Loading DocuMind…</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+          {wakingUp ? '☕ Server is waking up, please wait…' : 'Loading DocuMind…'}
+        </p>
+        {wakingUp && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', maxWidth: 280, textAlign: 'center' }}>
+            This may take up to 60 seconds on first load.
+          </p>
+        )}
       </div>
     );
   }

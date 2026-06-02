@@ -6,15 +6,19 @@ import React, {
   useCallback,
 } from 'react';
 import { login as apiLogin, register as apiRegister, getMe } from '../services/api';
+import axios from 'axios';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 const AuthContext = createContext(null);
+
+const BACKEND_URL = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/+$/, '') || '';
 
 // ─── Provider ────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem('pdf_chatbot_token'));
   const [loading, setLoading] = useState(true);
+  const [wakingUp, setWakingUp] = useState(false);
   const [error, setError] = useState(null);
 
   // ── Persist token helper ────────────────────────────────────────────────────
@@ -27,20 +31,35 @@ export function AuthProvider({ children }) {
     setToken(newToken);
   }, []);
 
-  // ── Bootstrap: load user from stored token ──────────────────────────────────
+  // ── Bootstrap: ping backend to wake it up, then load user ──────────────────
   useEffect(() => {
     const storedToken = localStorage.getItem('pdf_chatbot_token');
-    if (!storedToken) {
-      setLoading(false);
-      return;
-    }
 
     (async () => {
+      // Ping the health endpoint — if it takes >3s the backend is cold-starting
+      try {
+        const pingUrl = BACKEND_URL ? `${BACKEND_URL}/` : '/api/auth/me';
+        const controller = new AbortController();
+        const fastCheck = setTimeout(() => {
+          // Backend is slow to respond — show waking up message
+          setWakingUp(true);
+        }, 3000);
+        await axios.get(pingUrl, { signal: controller.signal, timeout: 60000 });
+        clearTimeout(fastCheck);
+        setWakingUp(false);
+      } catch {
+        setWakingUp(false);
+      }
+
+      if (!storedToken) {
+        setLoading(false);
+        return;
+      }
+
       try {
         const me = await getMe();
         setUser(me);
       } catch {
-        // Token invalid / expired — clear it
         persistToken(null);
         setUser(null);
       } finally {
@@ -122,6 +141,7 @@ export function AuthProvider({ children }) {
     user,
     token,
     loading,
+    wakingUp,
     error,
     login,
     register,

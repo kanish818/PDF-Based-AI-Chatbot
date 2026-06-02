@@ -138,8 +138,8 @@ def list_documents(
     db: Session = Depends(get_db),
 ):
     """Return all documents belonging to the current user."""
+    # Only ensure the worker thread is alive — don't run full reconciliation on every poll.
     processor.ensure_running()
-    processor.recover_and_enqueue_pending_documents()
     docs = (
         db.query(Document)
         .filter(Document.user_id == current_user.id)

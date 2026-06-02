@@ -21,7 +21,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("app.log")
     ]
 )
 logger = logging.getLogger(__name__)
@@ -87,24 +86,26 @@ def health_check():
 
 
 def _ensure_document_columns() -> None:
+    is_sqlite = DATABASE_URL.startswith("sqlite")
+    ts_type = "DATETIME" if is_sqlite else "TIMESTAMP WITH TIME ZONE"
+
     required_columns = {
         "storage_path": "TEXT",
         "storage_bucket": "TEXT",
-        "processing_attempts": "INTEGER NOT NULL DEFAULT 0",
-        "processing_started_at": "DATETIME",
-        "processing_heartbeat_at": "DATETIME",
+        "processing_attempts": f"INTEGER NOT NULL DEFAULT 0",
+        "processing_started_at": ts_type,
+        "processing_heartbeat_at": ts_type,
         "processing_error": "TEXT",
         "summary_text": "TEXT",
         "document_type": "TEXT",
         "main_topics_json": "TEXT",
         "people_names_json": "TEXT",
-        "updated_at": "DATETIME",
+        "updated_at": ts_type,
     }
 
     with engine.begin() as connection:
         inspector = inspect(connection)
         existing_columns = {col["name"] for col in inspector.get_columns("documents")}
-        is_sqlite = DATABASE_URL.startswith("sqlite")
 
         for column_name, column_sql in required_columns.items():
             if column_name in existing_columns:
