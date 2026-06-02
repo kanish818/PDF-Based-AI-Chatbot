@@ -5,7 +5,6 @@ document processor service so work survives request completion.
 """
 
 import logging
-import os
 import uuid
 from typing import List, Optional
 
@@ -19,6 +18,7 @@ from app.core.security import get_current_user
 from app.models.document import Document
 from app.models.user import User
 from app.services.document_processor import processor
+from app.services.supabase_storage import storage_service
 from app.services import vector_store
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,7 @@ class DocumentOut(BaseModel):
     page_count: Optional[int] = None
     status: str
     processing_error: Optional[str] = None
+    summary_text: Optional[str] = None
     created_at: str
     updated_at: Optional[str] = None
 
@@ -53,11 +54,10 @@ async def upload_documents(
     db: Session = Depends(get_db),
 ):
     """
-    Upload one or more PDF files. Each file is saved to disk and processed
+    Upload one or more PDF files. Each file is saved to Supabase Storage and processed
     asynchronously (parse → embed → store). Returns document records immediately
     with status='queued'.
     """
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     created_docs: List[Document] = []
 
     for upload_file in files:
@@ -87,17 +87,22 @@ async def upload_documents(
                 detail=f"File '{upload_file.filename}' is empty.",
             )
 
-        # Save to disk with a unique name to avoid collisions
-        unique_name = f"{uuid.uuid4().hex}_{upload_file.filename}"
-        file_path = os.path.join(settings.UPLOAD_DIR, unique_name)
-        with open(file_path, "wb") as f:
-            f.write(content)
+        object_key = f"{current_user.id}/{uuid.uuid4().hex}_{upload_file.filename}"
+        try:
+            storage_service.upload_bytes(object_key, content, upload_file.content_type or "application/pdf")
+        except Exception as exc:
+            logger.error("Failed to upload PDF to Supabase Storage: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not store the uploaded PDF. Please try again.",
+            ) from exc
 
         # Create DB record
         doc = Document(
             user_id=current_user.id,
             filename=upload_file.filename,
-            storage_path=file_path,
+            storage_path=object_key,
+            storage_bucket=settings.SUPABASE_STORAGE_BUCKET,
             file_size=file_size,
             status="queued",
             page_count=0,
@@ -119,6 +124,7 @@ async def upload_documents(
             page_count=d.page_count,
             status=d.status,
             processing_error=d.processing_error,
+            summary_text=d.summary_text,
             created_at=d.created_at.isoformat() if d.created_at else "",
             updated_at=d.updated_at.isoformat() if d.updated_at else "",
         )
@@ -146,6 +152,7 @@ def list_documents(
             page_count=d.page_count,
             status=d.status,
             processing_error=d.processing_error,
+            summary_text=d.summary_text,
             created_at=d.created_at.isoformat() if d.created_at else "",
             updated_at=d.updated_at.isoformat() if d.updated_at else "",
         )
@@ -171,10 +178,10 @@ def delete_document(
     # Remove from vector store
     vector_store.delete_document(user_id=current_user.id, doc_id=doc_id)
 
-    if doc.storage_path and os.path.exists(doc.storage_path):
+    if doc.storage_path:
         try:
-            os.remove(doc.storage_path)
-        except OSError as exc:
+            storage_service.delete_object(doc.storage_path)
+        except Exception as exc:
             logger.warning("Could not remove file for doc_id=%d: %s", doc_id, exc)
 
     # Remove from DB

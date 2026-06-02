@@ -11,7 +11,6 @@ import logging
 import os
 import queue
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -21,8 +20,10 @@ from app.core.database import SessionLocal
 from app.models.document import Document
 from app.services import vector_store
 from app.services.chunker import chunk_text
+from app.services.document_summary import summarize_document
 from app.services.embedder import embed_texts
 from app.services.pdf_parser import parse_pdf
+from app.services.supabase_storage import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +153,12 @@ class DocumentProcessor:
                 logger.info("Skipping already-ready doc_id=%d.", doc_id)
                 return
 
-            if not doc.storage_path or not os.path.exists(doc.storage_path):
+            if not doc.storage_path:
                 doc.status = "error"
-                doc.processing_error = "Uploaded file is missing from disk; please re-upload it."
+                doc.processing_error = "Uploaded file reference is missing; please re-upload it."
                 doc.updated_at = utcnow()
                 db.commit()
-                logger.error("Document id=%d has no recoverable storage path.", doc_id)
+                logger.error("Document id=%d has no recoverable storage object key.", doc_id)
                 return
 
             doc.status = "processing"
@@ -168,47 +169,61 @@ class DocumentProcessor:
             doc.updated_at = utcnow()
             db.commit()
 
-            logger.info("Starting processing for doc_id=%d path=%s", doc.id, doc.storage_path)
+            logger.info("Starting processing for doc_id=%d object=%s", doc.id, doc.storage_path)
 
-            pages = parse_pdf(doc.storage_path, heartbeat=lambda: self._heartbeat(db, doc))
-            page_count = len(pages)
-            self._heartbeat(db, doc)
+            temp_path = storage_service.download_to_tempfile(doc.storage_path)
+            try:
+                pages = parse_pdf(temp_path, heartbeat=lambda: self._heartbeat(db, doc))
+                page_count = len(pages)
+                self._heartbeat(db, doc)
 
-            chunks = chunk_text(pages, doc.filename)
-            if not chunks:
-                raise RuntimeError(
-                    "No searchable text could be extracted from this PDF. Try a clearer file."
+                chunks = chunk_text(pages, doc.filename)
+                if not chunks:
+                    raise RuntimeError(
+                        "No searchable text could be extracted from this PDF. Try a clearer file."
+                    )
+                self._heartbeat(db, doc)
+
+                summary = summarize_document(pages, doc.filename)
+                self._heartbeat(db, doc)
+
+                texts = [chunk["text"] for chunk in chunks]
+                embeddings = embed_texts(
+                    texts,
+                    task_type="RETRIEVAL_DOCUMENT",
+                    heartbeat=lambda: self._heartbeat(db, doc),
                 )
-            self._heartbeat(db, doc)
 
-            texts = [chunk["text"] for chunk in chunks]
-            embeddings = embed_texts(
-                texts,
-                task_type="RETRIEVAL_DOCUMENT",
-                heartbeat=lambda: self._heartbeat(db, doc),
-            )
+                vector_store.delete_document(user_id=doc.user_id, doc_id=doc.id)
+                vector_store.add_chunks(
+                    chunks=chunks,
+                    embeddings=embeddings,
+                    user_id=doc.user_id,
+                    doc_id=doc.id,
+                )
 
-            vector_store.delete_document(user_id=doc.user_id, doc_id=doc.id)
-            vector_store.add_chunks(
-                chunks=chunks,
-                embeddings=embeddings,
-                user_id=doc.user_id,
-                doc_id=doc.id,
-            )
-
-            doc.page_count = page_count
-            doc.status = "ready"
-            doc.processing_error = None
-            doc.processing_started_at = None
-            doc.processing_heartbeat_at = utcnow()
-            doc.updated_at = utcnow()
-            db.commit()
-            logger.info(
-                "Document id=%d processed successfully (%d pages, %d chunks).",
-                doc.id,
-                page_count,
-                len(chunks),
-            )
+                doc.page_count = page_count
+                doc.summary_text = summary["summary_text"]
+                doc.document_type = summary["document_type"]
+                doc.main_topics_json = summary["main_topics_json"]
+                doc.people_names_json = summary["people_names_json"]
+                doc.status = "ready"
+                doc.processing_error = None
+                doc.processing_started_at = None
+                doc.processing_heartbeat_at = utcnow()
+                doc.updated_at = utcnow()
+                db.commit()
+                logger.info(
+                    "Document id=%d processed successfully (%d pages, %d chunks).",
+                    doc.id,
+                    page_count,
+                    len(chunks),
+                )
+            finally:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
         except Exception as exc:
             logger.error("Document processing failed for doc_id=%d: %s", doc_id, exc, exc_info=True)
             db.rollback()

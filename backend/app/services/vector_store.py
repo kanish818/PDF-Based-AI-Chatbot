@@ -1,39 +1,19 @@
 """
-Vector Store Service
-Manages a ChromaDB persistent collection for storing and querying PDF chunk embeddings.
+Postgres-backed vector store using pgvector + SQLAlchemy.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.database import SessionLocal
+from app.models.chunk import DocumentChunk, DocumentEmbedding
 
 logger = logging.getLogger(__name__)
-
-COLLECTION_NAME = "pdf_documents"
-
-# Singleton client / collection
-_client: Optional[chromadb.PersistentClient] = None
-_collection = None
-
-
-def _get_collection():
-    """Return (and lazily initialise) the ChromaDB collection."""
-    global _client, _collection
-    if _collection is None:
-        _client = chromadb.PersistentClient(
-            path=settings.CHROMA_PERSIST_DIR,
-            settings=ChromaSettings(anonymized_telemetry=False),
-        )
-        _collection = _client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
-        )
-        logger.info("ChromaDB collection '%s' ready.", COLLECTION_NAME)
-    return _collection
 
 
 def add_chunks(
@@ -42,48 +22,42 @@ def add_chunks(
     user_id: int,
     doc_id: int,
 ) -> None:
-    """
-    Store chunk embeddings in ChromaDB.
-
-    Args:
-        chunks:     List of chunk dicts (must have 'text', 'filename', 'page_num', 'chunk_index').
-        embeddings: Parallel list of embedding vectors.
-        user_id:    Owner's user ID (stored as metadata for filtering).
-        doc_id:     Document DB ID (stored as metadata for filtering).
-    """
-    collection = _get_collection()
-
-    ids: List[str] = []
-    documents: List[str] = []
-    metadatas: List[Dict[str, Any]] = []
-
-    for chunk, embedding in zip(chunks, embeddings):
-        chunk_index = chunk["chunk_index"]
-        doc_id_str = f"{user_id}_{doc_id}_{chunk_index}"
-        ids.append(doc_id_str)
-        documents.append(chunk["text"])
-        metadatas.append(
-            {
-                "chunk_id": doc_id_str,
-                "filename": chunk["filename"],
-                "page_num": chunk["page_num"],
-                "chunk_index": chunk_index,
-                "section_heading": chunk.get("section_heading", ""),
-                "user_id": user_id,
-                "doc_id": doc_id,
-            }
-        )
-
-    if not ids:
+    if not chunks:
         return
 
-    collection.upsert(
-        ids=ids,
-        embeddings=embeddings,
-        documents=documents,
-        metadatas=metadatas,
-    )
-    logger.info("Stored %d chunks for doc_id=%d, user_id=%d.", len(ids), doc_id, user_id)
+    db: Session = SessionLocal()
+    try:
+        created_chunks: List[DocumentChunk] = []
+        for chunk in chunks:
+            created = DocumentChunk(
+                document_id=doc_id,
+                user_id=user_id,
+                chunk_index=chunk["chunk_index"],
+                filename=chunk["filename"],
+                page_num=chunk["page_num"],
+                section_heading=chunk.get("section_heading", ""),
+                text=chunk["text"],
+            )
+            db.add(created)
+            created_chunks.append(created)
+        db.flush()
+
+        for chunk_row, embedding in zip(created_chunks, embeddings):
+            db.add(
+                DocumentEmbedding(
+                    chunk_id=chunk_row.id,
+                    document_id=doc_id,
+                    user_id=user_id,
+                    embedding=embedding,
+                )
+            )
+        db.commit()
+        logger.info("Stored %d Postgres chunks for doc_id=%d, user_id=%d.", len(chunks), doc_id, user_id)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def search(
@@ -92,130 +66,91 @@ def search(
     doc_ids: List[int],
     n_results: int = 10,
 ) -> List[Dict[str, Any]]:
-    """
-    Semantic vector search filtered to the given user and document IDs.
-
-    Returns:
-        List of dicts: {text, filename, page_num, score}
-    """
-    collection = _get_collection()
-
     if not doc_ids:
         return []
 
-    # Build the ChromaDB where filter
-    if len(doc_ids) == 1:
-        where_filter = {
-            "$and": [
-                {"user_id": {"$eq": user_id}},
-                {"doc_id": {"$eq": doc_ids[0]}},
-            ]
-        }
-    else:
-        where_filter = {
-            "$and": [
-                {"user_id": {"$eq": user_id}},
-                {"doc_id": {"$in": doc_ids}},
-            ]
-        }
-
+    db: Session = SessionLocal()
     try:
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            where=where_filter,
-            include=["documents", "metadatas", "distances"],
+        distance = DocumentEmbedding.embedding.cosine_distance(query_embedding)
+        stmt = (
+            select(DocumentChunk, distance.label("distance"))
+            .join(DocumentEmbedding, DocumentEmbedding.chunk_id == DocumentChunk.id)
+            .where(DocumentEmbedding.user_id == user_id)
+            .where(DocumentEmbedding.document_id.in_(doc_ids))
+            .order_by(distance.asc())
+            .limit(n_results)
         )
-    except Exception as exc:
-        logger.error("ChromaDB query failed: %s", exc)
-        return []
-
-    output: List[Dict[str, Any]] = []
-    documents_list = results.get("documents", [[]])[0]
-    metadatas_list = results.get("metadatas", [[]])[0]
-    distances_list = results.get("distances", [[]])[0]
-
-    for text, meta, distance in zip(documents_list, metadatas_list, distances_list):
-        output.append(
-            {
-                "chunk_id": meta.get("chunk_id", ""),
-                "text": text,
-                "filename": meta.get("filename", ""),
-                "page_num": meta.get("page_num", 0),
-                "chunk_index": meta.get("chunk_index", 0),
-                "section_heading": meta.get("section_heading", ""),
-                "doc_id": meta.get("doc_id", 0),
-                "score": 1.0 - distance,  # cosine similarity
-                "vector_score": 1.0 - distance,
-            }
-        )
-
-    return output
+        rows = db.execute(stmt).all()
+        output: List[Dict[str, Any]] = []
+        for chunk, raw_distance in rows:
+            distance_value = float(raw_distance)
+            output.append(
+                {
+                    "chunk_id": str(chunk.id),
+                    "text": chunk.text,
+                    "filename": chunk.filename,
+                    "page_num": chunk.page_num,
+                    "chunk_index": chunk.chunk_index,
+                    "section_heading": chunk.section_heading or "",
+                    "doc_id": chunk.document_id,
+                    "score": 1.0 - distance_value,
+                    "vector_score": 1.0 - distance_value,
+                }
+            )
+        return output
+    finally:
+        db.close()
 
 
 def get_all_chunks_for_docs(user_id: int, doc_ids: List[int]) -> List[Dict[str, Any]]:
-    """
-    Retrieve ALL stored chunks for the given documents (used to build BM25 corpus).
-
-    Returns:
-        List of dicts: {text, filename, page_num}
-    """
-    collection = _get_collection()
-
     if not doc_ids:
         return []
 
-    if len(doc_ids) == 1:
-        where_filter = {
-            "$and": [
-                {"user_id": {"$eq": user_id}},
-                {"doc_id": {"$eq": doc_ids[0]}},
-            ]
-        }
-    else:
-        where_filter = {
-            "$and": [
-                {"user_id": {"$eq": user_id}},
-                {"doc_id": {"$in": doc_ids}},
-            ]
-        }
-
+    db: Session = SessionLocal()
     try:
-        results = collection.get(
-            where=where_filter,
-            include=["documents", "metadatas"],
+        stmt = (
+            select(DocumentChunk)
+            .where(DocumentChunk.user_id == user_id)
+            .where(DocumentChunk.document_id.in_(doc_ids))
+            .order_by(DocumentChunk.document_id.asc(), DocumentChunk.chunk_index.asc())
         )
-    except Exception as exc:
-        logger.error("ChromaDB get failed: %s", exc)
-        return []
-
-    output: List[Dict[str, Any]] = []
-    for text, meta in zip(results.get("documents", []), results.get("metadatas", [])):
-        output.append(
+        rows = db.execute(stmt).scalars().all()
+        return [
             {
-                "chunk_id": meta.get("chunk_id", ""),
-                "text": text,
-                "filename": meta.get("filename", ""),
-                "page_num": meta.get("page_num", 0),
-                "chunk_index": meta.get("chunk_index", 0),
-                "section_heading": meta.get("section_heading", ""),
-                "doc_id": meta.get("doc_id", 0),
+                "chunk_id": str(chunk.id),
+                "text": chunk.text,
+                "filename": chunk.filename,
+                "page_num": chunk.page_num,
+                "chunk_index": chunk.chunk_index,
+                "section_heading": chunk.section_heading or "",
+                "doc_id": chunk.document_id,
             }
-        )
-    return output
+            for chunk in rows
+        ]
+    finally:
+        db.close()
 
 
 def delete_document(user_id: int, doc_id: int) -> None:
-    """Delete all ChromaDB chunks belonging to the given document."""
-    collection = _get_collection()
+    db: Session = SessionLocal()
     try:
-        where_filter = {
-            "$and": [
-                {"user_id": {"$eq": user_id}},
-                {"doc_id": {"$eq": doc_id}},
-            ]
-        }
-        collection.delete(where=where_filter)
-        logger.info("Deleted ChromaDB chunks for doc_id=%d, user_id=%d.", doc_id, user_id)
-    except Exception as exc:
-        logger.error("Failed to delete doc chunks from ChromaDB: %s", exc)
+        chunk_ids = db.execute(
+            select(DocumentChunk.id)
+            .where(DocumentChunk.user_id == user_id)
+            .where(DocumentChunk.document_id == doc_id)
+        ).scalars().all()
+        if chunk_ids:
+            db.query(DocumentEmbedding).filter(DocumentEmbedding.chunk_id.in_(chunk_ids)).delete(
+                synchronize_session=False
+            )
+        db.query(DocumentChunk).filter(
+            DocumentChunk.user_id == user_id,
+            DocumentChunk.document_id == doc_id,
+        ).delete(synchronize_session=False)
+        db.commit()
+        logger.info("Deleted Postgres chunks for doc_id=%d, user_id=%d.", doc_id, user_id)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

@@ -21,10 +21,16 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_URL: str = Field(default="http://localhost:5173", env="FRONTEND_URL")
 
+    # Persistence / Storage
+    DATABASE_URL: str = Field(default="sqlite:///./data/chatbot.db", env="DATABASE_URL")
+    SUPABASE_URL: str = Field(default="", env="SUPABASE_URL")
+    SUPABASE_SERVICE_ROLE_KEY: str = Field(default="", env="SUPABASE_SERVICE_ROLE_KEY")
+    SUPABASE_ANON_KEY: str = Field(default="", env="SUPABASE_ANON_KEY")
+    SUPABASE_STORAGE_BUCKET: str = Field(default="pdf-documents", env="SUPABASE_STORAGE_BUCKET")
+
     # App Config
     MAX_UPLOAD_SIZE_MB: int = 50
-    CHROMA_PERSIST_DIR: str = "./chroma_db"
-    UPLOAD_DIR: str = "./uploads"
+    TEMP_DIR: str = "./tmp"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

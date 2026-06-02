@@ -7,12 +7,13 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.core.config import settings
-from app.core.database import create_tables, engine
+from app.core.database import create_tables, engine, DATABASE_URL
 from app.api import auth, documents, chat
 from app.services.document_processor import processor
+from app.services.supabase_storage import storage_service
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -60,16 +61,14 @@ app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 def on_startup():
     logger.info("Starting PDF AI Chatbot backend …")
 
-    # Ensure required directories exist
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    logger.info("Upload directory: %s", settings.UPLOAD_DIR)
-
-    os.makedirs(settings.CHROMA_PERSIST_DIR, exist_ok=True)
-    logger.info("ChromaDB directory: %s", settings.CHROMA_PERSIST_DIR)
+    os.makedirs(settings.TEMP_DIR, exist_ok=True)
+    logger.info("Temp directory: %s", settings.TEMP_DIR)
 
     # Create DB tables
     create_tables()
     _ensure_document_columns()
+    if storage_service.is_configured():
+        storage_service.ensure_bucket()
     processor.start()
 
     logger.info("Startup complete. API docs at /docs")
@@ -90,16 +89,22 @@ def health_check():
 def _ensure_document_columns() -> None:
     required_columns = {
         "storage_path": "TEXT",
+        "storage_bucket": "TEXT",
         "processing_attempts": "INTEGER NOT NULL DEFAULT 0",
         "processing_started_at": "DATETIME",
         "processing_heartbeat_at": "DATETIME",
         "processing_error": "TEXT",
+        "summary_text": "TEXT",
+        "document_type": "TEXT",
+        "main_topics_json": "TEXT",
+        "people_names_json": "TEXT",
         "updated_at": "DATETIME",
     }
 
     with engine.begin() as connection:
-        rows = connection.execute(text("PRAGMA table_info(documents)")).fetchall()
-        existing_columns = {row[1] for row in rows}
+        inspector = inspect(connection)
+        existing_columns = {col["name"] for col in inspector.get_columns("documents")}
+        is_sqlite = DATABASE_URL.startswith("sqlite")
 
         for column_name, column_sql in required_columns.items():
             if column_name in existing_columns:
@@ -109,12 +114,25 @@ def _ensure_document_columns() -> None:
             )
             logger.info("Added missing documents.%s column.", column_name)
 
-        connection.execute(
-            text(
-                """
-                UPDATE documents
-                SET updated_at = COALESCE(updated_at, created_at),
-                    processing_attempts = COALESCE(processing_attempts, 0)
-                """
+        if is_sqlite:
+            connection.execute(
+                text(
+                    """
+                    UPDATE documents
+                    SET updated_at = COALESCE(updated_at, created_at),
+                        processing_attempts = COALESCE(processing_attempts, 0)
+                    """
+                )
             )
-        )
+        else:
+            connection.execute(
+                text(
+                    """
+                    UPDATE documents
+                    SET updated_at = COALESCE(updated_at, created_at),
+                        processing_attempts = COALESCE(processing_attempts, 0),
+                        storage_bucket = COALESCE(storage_bucket, :bucket)
+                    """
+                ),
+                {"bucket": settings.SUPABASE_STORAGE_BUCKET},
+            )

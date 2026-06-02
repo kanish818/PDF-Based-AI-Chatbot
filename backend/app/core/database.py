@@ -1,20 +1,37 @@
-import os
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 import logging
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/chatbot.db")
+def _normalise_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 30},
-    echo=False,
-)
+
+DATABASE_URL = _normalise_database_url(settings.DATABASE_URL)
+
+
+def _is_sqlite_url(url: str) -> bool:
+    return url.startswith("sqlite")
+
+
+def _build_engine():
+    kwargs = {"echo": False, "pool_pre_ping": True}
+    if _is_sqlite_url(DATABASE_URL):
+        kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
+    else:
+        kwargs["connect_args"] = {"sslmode": "require"}
+    return create_engine(DATABASE_URL, **kwargs)
+
+
+engine = _build_engine()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -33,6 +50,10 @@ def get_db() -> Generator[Session, None, None]:
 def create_tables() -> None:
     """Create all tables defined in SQLAlchemy models."""
     # Import models so SQLAlchemy registers them before creating tables
-    from app.models import user, document, conversation  # noqa: F401
+    from app.models import user, document, conversation, chunk  # noqa: F401
+
+    if not _is_sqlite_url(DATABASE_URL):
+        with engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created / verified.")

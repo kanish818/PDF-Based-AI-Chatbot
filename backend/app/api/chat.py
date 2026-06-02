@@ -110,6 +110,36 @@ def _normalise_label(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
+def _is_summary_question(question: str) -> bool:
+    lowered = question.lower()
+    return any(token in lowered for token in ("summary", "summarize", "overview", "important points"))
+
+
+def _inject_document_summaries(chunks: List[dict], docs: List[Document], question: str) -> List[dict]:
+    if not _is_summary_question(question):
+        return chunks
+
+    summary_chunks = []
+    for doc in docs:
+        if not doc.summary_text:
+            continue
+        summary_chunks.append(
+            {
+                "chunk_id": f"summary-{doc.id}",
+                "text": doc.summary_text,
+                "filename": doc.filename,
+                "page_num": 1,
+                "chunk_index": -1,
+                "section_heading": "Document Summary",
+                "doc_id": doc.id,
+                "score": 2.0,
+                "vector_score": 1.0,
+            }
+        )
+
+    return summary_chunks + chunks if summary_chunks else chunks
+
+
 def _infer_conversation_document_ids(conv: Conversation, user_id: int, db: Session) -> List[int]:
     linked = _get_conversation_document_ids(conv.id, db)
     if linked:
@@ -449,6 +479,7 @@ async def stream_conversation(
                 )
             except Exception as exc:
                 logger.error("Retrieval failed: %s", exc)
+        retrieved_chunks = _inject_document_summaries(retrieved_chunks, allowed_docs, question)
 
         # Stream LLM response
         full_response = ""

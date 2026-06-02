@@ -2,11 +2,19 @@ services:
   - type: web
     runtime: docker
     name: documind-backend
-    plan: starter
+    plan: free
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /
     envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: pdf-documents
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY
@@ -28,16 +36,8 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
       - key: MAX_UPLOAD_SIZE_MB
         value: "50"
-      - key: CHROMA_PERSIST_DIR
-        value: /app/storage/chroma_db
-      - key: UPLOAD_DIR
-        value: /app/storage/uploads
-      - key: DATABASE_URL
-        value: sqlite:////app/storage/chatbot.db
-    disk:
-      name: documind-data
-      mountPath: /app/storage
-      sizeGB: 5
+      - key: TEMP_DIR
+        value: /tmp/documind
 
   - type: web
     runtime: docker
