@@ -32,7 +32,7 @@ services:
       - key: FRONTEND_URL
         fromService:
           type: web
-          name: documind-frontend
+          name: documind-frontend-static
           envVarKey: RENDER_EXTERNAL_URL
       - key: MAX_UPLOAD_SIZE_MB
         value: "50"
@@ -40,14 +40,13 @@ services:
         value: /tmp/documind
 
   - type: web
-    runtime: docker
-    name: documind-frontend
-    plan: free
-    dockerfilePath: ./frontend/Dockerfile
-    dockerContext: ./frontend
-    healthCheckPath: /
+    runtime: static
+    name: documind-frontend-static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
     envVars:
-      - key: BACKEND_UPSTREAM_URL
+      - key: VITE_API_ORIGIN
         fromService:
           type: web
           name: documind-backend

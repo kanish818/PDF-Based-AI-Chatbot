@@ -2,7 +2,7 @@
 
 > Upload PDF documents and ask questions about their contents using an AI-powered chatbot with hybrid search, streaming responses, and source attribution.
 
-[![Live Demo](https://img.shields.io/badge/Live-Demo-6366f1?style=for-the-badge)](https://documind-frontend-free.onrender.com)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-6366f1?style=for-the-badge)](https://documind-frontend-static.onrender.com)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-gray?style=for-the-badge)](https://github.com/kanish818/PDF-Based-AI-Chatbot)
 
 ---
@@ -11,11 +11,11 @@
 
 | Service | URL |
 |---------|-----|
-| **Frontend (App)** | https://documind-frontend-free.onrender.com |
+| **Frontend (App)** | https://documind-frontend-static.onrender.com |
 | **Backend API** | https://documind-backend-free.onrender.com |
 | **API Docs (Swagger)** | https://documind-backend-free.onrender.com/docs |
 
-> **Note:** Hosted on Render free tier — the service may take ~30 seconds to wake up on first visit.
+> **Note:** The frontend is deployed as a Render static site, so it opens immediately. The backend remains on Render free tier and may take a short time to wake when the app first makes an API call.
 
 ---
 
@@ -226,9 +226,9 @@ Recommended flow:
    - `GOOGLE_CLIENT_SECRET`
 7. Render creates:
    - `documind-backend` as a Docker web service
-   - `documind-frontend` as a Docker web service running Nginx
+   - `documind-frontend-static` as a Render static site
 8. After the first deploy completes, add these Google OAuth settings:
-   - Authorized JavaScript origin: `https://documind-frontend-free.onrender.com`
+   - Authorized JavaScript origin: `https://documind-frontend-static.onrender.com`
    - Authorized redirect URI: `https://documind-backend-free.onrender.com/api/auth/google/callback`
 
 Why this setup:
