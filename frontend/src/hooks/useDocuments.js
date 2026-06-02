@@ -29,8 +29,8 @@ export function useDocuments() {
   const mountedRef = useRef(true);
 
   // ── Fetch documents ─────────────────────────────────────────────────────────
-  const fetchDocuments = useCallback(async () => {
-    setLoading(true);
+  const fetchDocuments = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const docs = await apiGetDocuments();
@@ -53,7 +53,7 @@ export function useDocuments() {
       return [];
     } finally {
       if (mountedRef.current) {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     }
   }, []);
@@ -78,7 +78,7 @@ export function useDocuments() {
     if (hasProcessing) {
       pollTimerRef.current = setTimeout(async () => {
         if (mountedRef.current) {
-          await fetchDocuments();
+          await fetchDocuments({ silent: true });
         }
       }, POLL_INTERVAL_MS);
     } else {
@@ -123,7 +123,7 @@ export function useDocuments() {
 
       // Immediately refresh from backend so queued uploads transition
       // into processing/ready without waiting for the next poll tick.
-      await fetchDocuments();
+      await fetchDocuments({ silent: true });
 
       return uploaded;
     } catch (err) {
@@ -155,7 +155,7 @@ export function useDocuments() {
       // Restore on error
       if (mountedRef.current) {
         setError('Failed to delete document.');
-        await fetchDocuments();
+        await fetchDocuments({ silent: true });
       }
     }
   }, [fetchDocuments]);
