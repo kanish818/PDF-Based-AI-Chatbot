@@ -179,7 +179,7 @@ def google_callback(code: str, db: Session = Depends(get_db)):
     except httpx.HTTPError as exc:
         logger.error("Google OAuth HTTP error: %s", exc)
         return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/auth/callback?error=oauth_failed"
+            url=f"{settings.FRONTEND_URL}/?error=oauth_failed"
         )
 
     google_id = userinfo.get("id")
@@ -188,7 +188,7 @@ def google_callback(code: str, db: Session = Depends(get_db)):
 
     if not google_id or not email:
         return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/auth/callback?error=missing_user_info"
+            url=f"{settings.FRONTEND_URL}/?error=missing_user_info"
         )
 
     # Find or create the local user
@@ -206,7 +206,7 @@ def google_callback(code: str, db: Session = Depends(get_db)):
 
     jwt_token = _make_token(user)
     return RedirectResponse(
-        url=f"{settings.FRONTEND_URL}/auth/callback?token={jwt_token}"
+        url=f"{settings.FRONTEND_URL}/?token={jwt_token}"
     )
 
 

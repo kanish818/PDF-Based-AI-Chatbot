@@ -42,10 +42,11 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
-    routes:
-      - type: rewrite
-        source: /api/*
-        destination: https://documind-backend-free.onrender.com/api/:splat
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+    redirects:
       - type: rewrite
         source: /*
         destination: /index.html
