@@ -2,8 +2,20 @@
 
 > Upload PDF documents and ask questions about their contents using an AI-powered chatbot with hybrid search, streaming responses, and source attribution.
 
-[![Live Demo](https://img.shields.io/badge/Live-Demo-6366f1?style=for-the-badge)](https://your-render-url.onrender.com)
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-gray?style=for-the-badge)](https://github.com/yourusername/pdf-chatbot)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-6366f1?style=for-the-badge)](https://documind-frontend-free.onrender.com)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-gray?style=for-the-badge)](https://github.com/kanish818/PDF-Based-AI-Chatbot)
+
+---
+
+## 🌍 Live Application
+
+| Service | URL |
+|---------|-----|
+| **Frontend (App)** | https://documind-frontend-free.onrender.com |
+| **Backend API** | https://documind-backend-free.onrender.com |
+| **API Docs (Swagger)** | https://documind-backend-free.onrender.com/docs |
+
+> **Note:** Hosted on Render free tier — the service may take ~30 seconds to wake up on first visit.
 
 ---
 
@@ -144,8 +156,8 @@ User: {question}
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/pdf-chatbot.git
-   cd pdf-chatbot
+   git clone https://github.com/kanish818/PDF-Based-AI-Chatbot.git
+   cd PDF-Based-AI-Chatbot
    ```
 
 2. **Configure environment**
@@ -206,8 +218,8 @@ Recommended flow:
    - `documind-backend` as a Docker web service with a persistent disk
    - `documind-frontend` as a Docker web service running Nginx
 6. After the first deploy completes, add these Google OAuth settings:
-   - Authorized JavaScript origin: your frontend Render URL
-   - Authorized redirect URI: `https://<your-backend-url>/api/auth/google/callback`
+   - Authorized JavaScript origin: `https://documind-frontend-free.onrender.com`
+   - Authorized redirect URI: `https://documind-backend-free.onrender.com/api/auth/google/callback`
 
 ---
 
