@@ -7,6 +7,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from sqlalchemy import inspect, text
 
 from app.core.config import settings
@@ -83,6 +84,12 @@ def on_shutdown():
 def health_check():
     """Simple health-check endpoint."""
     return {"status": "ok", "service": "PDF AI Chatbot API", "version": "1.0.0"}
+
+
+@app.head("/", tags=["Health"], include_in_schema=False)
+def health_check_head():
+    """HEAD health-check for uptime monitors (e.g. UptimeRobot)."""
+    return Response(status_code=200)
 
 
 def _ensure_document_columns() -> None:
